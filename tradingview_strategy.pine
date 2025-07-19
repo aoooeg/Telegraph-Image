@@ -1,96 +1,78 @@
 //@version=5
-strategy("DCA策略 - 跌4%开仓加仓", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=10, calc_on_every_tick=true)
+strategy("简单DCA策略", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
 
-// 输入参数
-initial_drop_percent = input.float(4.0, title="初始开仓跌幅(%)", minval=1.0, maxval=20.0)
-add_position_drop_percent = input.float(2.0, title="加仓跌幅(%)", minval=0.5, maxval=10.0)
-max_positions = input.int(8, title="最大加仓次数", minval=1, maxval=20)
-position_size = input.float(10.0, title="每次开仓资金占比(%)", minval=1.0, maxval=100.0)
+// 策略参数
+initial_drop = input.float(4.0, "首次开仓跌幅%", minval=1.0, maxval=20.0)
+add_drop = input.float(2.0, "加仓跌幅%", minval=0.5, maxval=10.0) 
+max_adds = input.int(8, "最大加仓次数", minval=1, maxval=20)
+position_pct = input.float(10.0, "每次仓位%", minval=1.0, maxval=100.0)
 
-// 全局变量
-var float first_entry_price = na
-var int current_positions = 0
-var bool in_trade = false
+// 状态变量
+var bool traded_today = false
+var int add_count = 0
+var float open_price = na
 
-// 获取当前价格和开盘价
-current_price = close
-current_open = open
+// 检测新的一天
+is_new_day = ta.change(time("1D"))
 
-// 新K线开始时重置
-if ta.change(time) != 0
-    if in_trade
-        strategy.close_all(comment="K线收盘平仓")
-    first_entry_price := na
-    current_positions := 0
-    in_trade := false
+// 每天开始重置
+if is_new_day
+    if strategy.position_size > 0
+        strategy.close_all("日结平仓")
+    traded_today := false
+    add_count := 0
+    open_price := open
 
-// 计算相对开盘价的跌幅
-drop_from_open = (current_open - current_price) / current_open * 100
+// 记录开盘价
+if na(open_price)
+    open_price := open
 
-// 开仓逻辑：跌4%时首次开仓
-if drop_from_open >= initial_drop_percent and not in_trade
-    strategy.entry("开仓", strategy.long, qty=position_size)
-    first_entry_price := current_price
-    current_positions := 1
-    in_trade := true
+// 计算跌幅
+drop_pct = (open_price - close) / open_price * 100
 
-// 加仓逻辑：基于开盘价计算加仓点位
-if in_trade and current_positions < max_positions
-    // 计算下一个加仓点位
-    next_add_level = initial_drop_percent + (current_positions * add_position_drop_percent)
+// 首次开仓：跌幅达到4%
+if drop_pct >= initial_drop and not traded_today
+    strategy.entry("开仓", strategy.long, qty=position_pct/100*strategy.equity/close)
+    traded_today := true
+    add_count := 1
+
+// 加仓逻辑：每跌2%加仓一次
+if traded_today and add_count < max_adds
+    required_drop = initial_drop + (add_count * add_drop)
+    if drop_pct >= required_drop
+        strategy.entry("加仓" + str.tostring(add_count+1), strategy.long, qty=position_pct/100*strategy.equity/close)
+        add_count := add_count + 1
+
+// 显示当前状态
+if traded_today
+    var label info_label = na
+    label.delete(info_label)
     
-    // 如果当前跌幅达到下一个加仓点位
-    if drop_from_open >= next_add_level
-        strategy.entry("加仓" + str.tostring(current_positions + 1), strategy.long, qty=position_size)
-        current_positions := current_positions + 1
-
-// K线收盘平仓
-if barstate.isconfirmed and in_trade
-    strategy.close_all(comment="K线收盘平仓")
-
-// 显示信息
-if in_trade
-    info_text = "持仓数: " + str.tostring(current_positions) + "/" + str.tostring(max_positions) + 
-                "\n开盘价: " + str.tostring(current_open, "#.####") + 
-                "\n当前价: " + str.tostring(current_price, "#.####") + 
-                "\n开盘跌幅: " + str.tostring(drop_from_open, "#.##") + "%" +
-                "\n下次加仓: " + str.tostring(initial_drop_percent + (current_positions * add_position_drop_percent), "#.##") + "%"
+    info_text = "开盘价: " + str.tostring(open_price, "#.####") + 
+                "\n当前价: " + str.tostring(close, "#.####") + 
+                "\n跌幅: " + str.tostring(drop_pct, "#.##") + "%" +
+                "\n已开仓: " + str.tostring(add_count) + "/" + str.tostring(max_adds) +
+                "\n仓位大小: " + str.tostring(strategy.position_size)
     
-    label.new(bar_index, high, text=info_text, color=color.blue, style=label.style_label_down, size=size.normal)
-
-// 绘制买入信号
-plotshape(series=strategy.position_size > strategy.position_size[1], 
-          title="买入信号", 
-          location=location.belowbar, 
-          color=color.green, 
-          style=shape.triangleup, 
-          size=size.small)
-
-// 绘制卖出信号
-plotshape(series=strategy.position_size < strategy.position_size[1] and strategy.position_size[1] > 0, 
-          title="卖出信号", 
-          location=location.abovebar, 
-          color=color.red, 
-          style=shape.triangledown, 
-          size=size.small)
+    info_label := label.new(bar_index, high, info_text, color=color.blue, style=label.style_label_down, size=size.normal)
 
 // 绘制开盘价线
-plot(current_open, color=color.blue, linewidth=1, title="开盘价线")
+plot(open_price, "开盘价", color=color.blue, linewidth=2)
 
-// 绘制加仓线
-for i = 1 to max_positions
-    add_level_percent = initial_drop_percent + ((i - 1) * add_position_drop_percent)
-    add_level_price = current_open * (1 - add_level_percent / 100)
-    plot(add_level_price, color=color.gray, linewidth=1, linestyle=line.style_dashed, title="加仓线" + str.tostring(i))
+// 绘制开仓线和加仓线
+first_entry_price = open_price * (1 - initial_drop/100)
+plot(first_entry_price, "首次开仓线", color=color.green, linewidth=1)
 
-// 策略统计表格
-if barstate.islast
-    var table info_table = table.new(position.top_right, 2, 4, bgcolor=color.white, border_width=1)
-    table.cell(info_table, 0, 0, "总交易次数", text_color=color.black)
-    table.cell(info_table, 1, 0, str.tostring(strategy.closedtrades), text_color=color.black)
-    table.cell(info_table, 0, 1, "胜率", text_color=color.black)
-    table.cell(info_table, 1, 1, str.tostring(strategy.wintrades / math.max(strategy.closedtrades, 1) * 100, "#.##") + "%", text_color=color.black)
-    table.cell(info_table, 0, 2, "总盈亏", text_color=color.black)
-    table.cell(info_table, 1, 2, str.tostring(strategy.netprofit, "#.##"), text_color=color.black)
-    table.cell(info_table, 0, 3, "最大回撤", text_color=color.black)
-    table.cell(info_table, 1, 3, str.tostring(strategy.max_drawdown, "#.##"), text_color=color.black)
+for i = 1 to max_adds-1
+    add_price = open_price * (1 - (initial_drop + i*add_drop)/100)
+    plot(add_price, "加仓线" + str.tostring(i+1), color=color.orange, linewidth=1)
+
+// 买入信号
+plotshape(strategy.position_size > strategy.position_size[1], "买入", location.belowbar, color.lime, shape.triangleup, size.small)
+
+// 卖出信号  
+plotshape(strategy.position_size < strategy.position_size[1] and strategy.position_size[1] > 0, "卖出", location.abovebar, color.red, shape.triangledown, size.small)
+
+// 调试信息
+plotchar(traded_today, "已交易", "T", location.top, color.yellow, size=size.tiny)
+plotchar(add_count, "加仓次数", "C", location.top, color.purple, size=size.tiny)
