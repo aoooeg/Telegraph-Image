@@ -16,20 +16,20 @@ var bool has_position = false
 // 获取当前价格
 current_price = close
 
-// 重置逻辑 - 新的交易日开始时重置
-if dayofweek != dayofweek[1] and has_position
-    strategy.close_all(comment="日线结束平仓")
+// 每根K线开始时重置持仓状态
+if barstate.isconfirmed and has_position
+    strategy.close_all(comment="K线收盘平仓")
     entry_price := na
     position_count := 0
     last_add_price := na
     has_position := false
 
-// 计算跌幅
-price_drop_from_high = ta.highest(high, 20)
-drop_percent = (price_drop_from_high - current_price) / price_drop_from_high * 100
+// 计算当前K线相对开盘价的跌幅
+current_open = open
+drop_percent_from_open = (current_open - current_price) / current_open * 100
 
-// 开仓条件：价格从最近高点跌4%且当前无持仓
-if drop_percent >= initial_drop_percent and not has_position
+// 开仓条件：当前价格相对开盘价跌4%且当前无持仓
+if drop_percent_from_open >= initial_drop_percent and not has_position
     strategy.entry("开仓", strategy.long, qty=position_size)
     entry_price := current_price
     last_add_price := current_price
@@ -44,9 +44,9 @@ if has_position and not na(last_add_price) and position_count < max_positions
         last_add_price := current_price
         position_count := position_count + 1
 
-// K线结束平仓逻辑
-if barstate.islast and has_position
-    strategy.close_all(comment="K线结束平仓")
+// K线收盘平仓逻辑
+if barstate.isconfirmed and has_position
+    strategy.close_all(comment="K线收盘平仓")
     entry_price := na
     position_count := 0
     last_add_price := na
@@ -56,9 +56,9 @@ if barstate.islast and has_position
 if has_position
     label.new(bar_index, high, 
               text="持仓数: " + str.tostring(position_count) + 
-                   "\n入场价: " + str.tostring(entry_price, "#.##") + 
+                   "\n开盘价: " + str.tostring(open, "#.##") + 
                    "\n当前价: " + str.tostring(current_price, "#.##") + 
-                   "\n盈亏: " + str.tostring((current_price - entry_price) / entry_price * 100, "#.##") + "%", 
+                   "\n开盘跌幅: " + str.tostring(drop_percent_from_open, "#.##") + "%", 
               color=color.blue, 
               style=label.style_label_down, 
               size=size.normal)
@@ -80,7 +80,7 @@ plotshape(series=strategy.position_size < strategy.position_size[1] and strategy
           size=size.small)
 
 // 绘制价格线
-plot(entry_price, color=color.blue, linewidth=1, title="入场价格线")
+plot(open, color=color.blue, linewidth=1, title="开盘价格线")
 plot(last_add_price, color=color.orange, linewidth=1, title="最后加仓价格线")
 
 // 显示策略统计
