@@ -1,0 +1,94 @@
+//@version=5
+strategy("DCA策略 - 跌4%开仓加仓", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// 输入参数
+initial_drop_percent = input.float(4.0, title="初始开仓跌幅(%)", minval=1.0, maxval=20.0)
+add_position_drop_percent = input.float(2.0, title="加仓跌幅(%)", minval=0.5, maxval=10.0)
+max_positions = input.int(8, title="最大加仓次数", minval=1, maxval=20)
+position_size = input.float(10.0, title="每次开仓资金占比(%)", minval=1.0, maxval=100.0)
+
+// 全局变量
+var float entry_price = na
+var int position_count = 0
+var float last_add_price = na
+var bool has_position = false
+
+// 获取当前价格
+current_price = close
+
+// 重置逻辑 - 新的交易日开始时重置
+if dayofweek != dayofweek[1] and has_position
+    strategy.close_all(comment="日线结束平仓")
+    entry_price := na
+    position_count := 0
+    last_add_price := na
+    has_position := false
+
+// 计算跌幅
+price_drop_from_high = ta.highest(high, 20)
+drop_percent = (price_drop_from_high - current_price) / price_drop_from_high * 100
+
+// 开仓条件：价格从最近高点跌4%且当前无持仓
+if drop_percent >= initial_drop_percent and not has_position
+    strategy.entry("开仓", strategy.long, qty=position_size)
+    entry_price := current_price
+    last_add_price := current_price
+    position_count := 1
+    has_position := true
+    
+// 加仓条件：已有持仓，价格相对上次买入价格跌2%，且未达到最大加仓次数
+if has_position and not na(last_add_price) and position_count < max_positions
+    add_drop_percent = (last_add_price - current_price) / last_add_price * 100
+    if add_drop_percent >= add_position_drop_percent
+        strategy.entry("加仓" + str.tostring(position_count), strategy.long, qty=position_size)
+        last_add_price := current_price
+        position_count := position_count + 1
+
+// K线结束平仓逻辑
+if barstate.islast and has_position
+    strategy.close_all(comment="K线结束平仓")
+    entry_price := na
+    position_count := 0
+    last_add_price := na
+    has_position := false
+
+// 在图表上显示信息
+if has_position
+    label.new(bar_index, high, 
+              text="持仓数: " + str.tostring(position_count) + 
+                   "\n入场价: " + str.tostring(entry_price, "#.##") + 
+                   "\n当前价: " + str.tostring(current_price, "#.##") + 
+                   "\n盈亏: " + str.tostring((current_price - entry_price) / entry_price * 100, "#.##") + "%", 
+              color=color.blue, 
+              style=label.style_label_down, 
+              size=size.normal)
+
+// 绘制开仓和加仓点
+plotshape(series=strategy.position_size > strategy.position_size[1], 
+          title="买入信号", 
+          location=location.belowbar, 
+          color=color.green, 
+          style=shape.triangleup, 
+          size=size.small)
+
+// 绘制平仓点
+plotshape(series=strategy.position_size < strategy.position_size[1] and strategy.position_size[1] > 0, 
+          title="卖出信号", 
+          location=location.abovebar, 
+          color=color.red, 
+          style=shape.triangledown, 
+          size=size.small)
+
+// 绘制价格线
+plot(entry_price, color=color.blue, linewidth=1, title="入场价格线")
+plot(last_add_price, color=color.orange, linewidth=1, title="最后加仓价格线")
+
+// 显示策略统计
+if barstate.islast
+    table.new(position.top_right, 2, 6, bgcolor=color.white, border_width=1)
+    table.cell(table_id=table.new(position.top_right, 2, 6), column=0, row=0, text="总交易次数", text_color=color.black)
+    table.cell(table_id=table.new(position.top_right, 2, 6), column=1, row=0, text=str.tostring(strategy.closedtrades), text_color=color.black)
+    table.cell(table_id=table.new(position.top_right, 2, 6), column=0, row=1, text="胜率", text_color=color.black)
+    table.cell(table_id=table.new(position.top_right, 2, 6), column=1, row=1, text=str.tostring(strategy.wintrades / strategy.closedtrades * 100, "#.##") + "%", text_color=color.black)
+    table.cell(table_id=table.new(position.top_right, 2, 6), column=0, row=2, text="总盈亏", text_color=color.black)
+    table.cell(table_id=table.new(position.top_right, 2, 6), column=1, row=2, text=str.tostring(strategy.netprofit, "#.##"), text_color=color.black)
